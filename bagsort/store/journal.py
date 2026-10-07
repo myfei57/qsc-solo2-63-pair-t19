@@ -9,8 +9,24 @@ from the watermark" as real properties instead of conventions.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
 from typing import Any
+
+JOURNAL_GENESIS = "0" * 64
+
+
+def link_digest(previous: str, entry: "JournalEntry") -> str:
+    """Hash one journal entry onto the prefix digest before it."""
+
+    material = json.dumps(
+        [previous, entry.as_dict()],
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -55,6 +71,7 @@ class Journal:
     def __init__(self) -> None:
         self._committed: list[JournalEntry] = []
         self._pending: list[tuple[str, dict[str, Any], str]] = []
+        self._digest = JOURNAL_GENESIS
 
     @property
     def watermark(self) -> int:
@@ -62,12 +79,20 @@ class Journal:
             return 0
         return self._committed[-1].sequence
 
+    @property
+    def digest(self) -> str:
+        return self._digest
+
     def committed(self) -> list[JournalEntry]:
         return list(self._committed)
 
     def since(self, watermark: int) -> list[JournalEntry]:
         """Entries with ``sequence`` strictly greater than ``watermark``."""
 
+        if not self._committed or watermark >= self._committed[-1].sequence:
+            return []
+        if watermark < self._committed[0].sequence:
+            return list(self._committed)
         return [entry for entry in self._committed if entry.sequence > watermark]
 
     def pending(self) -> list[tuple[str, dict[str, Any], str]]:
@@ -85,9 +110,9 @@ class Journal:
         sequence = self.watermark
         for kind, payload, at in self._pending:
             sequence += 1
-            self._committed.append(
-                JournalEntry(sequence=sequence, kind=kind, payload=payload, at=at)
-            )
+            entry = JournalEntry(sequence=sequence, kind=kind, payload=payload, at=at)
+            self._committed.append(entry)
+            self._digest = link_digest(self._digest, entry)
         self._pending = []
         return sequence
 

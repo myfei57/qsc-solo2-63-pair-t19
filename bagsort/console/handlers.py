@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from bagsort.audit.checkpoint import VerificationPolicy
 from bagsort.checkin.entries import Entry
 from bagsort.model.entities import Flight, Reading
 from bagsort.model.validate import validate_flight
@@ -17,6 +18,15 @@ def _plant(server):
     return server.plant
 
 
+def _verification_policy(request: Request) -> VerificationPolicy:
+    mode = request.query_str("mode", "entries")
+    if mode == "time":
+        seconds = request.query_int("window", 3600)
+        return VerificationPolicy(mode="time", window_seconds=float(seconds))
+    interval = request.query_int("interval", 100)
+    return VerificationPolicy(mode="entries", interval=interval)
+
+
 # ---------------------------------------------------------------------------
 # service level
 # ---------------------------------------------------------------------------
@@ -29,7 +39,8 @@ def handle_health(server, request: Request) -> Response:
             "status": "ok",
             "watermark": plant.store.watermark,
             "dirty": plant.store.dirty(),
-            "audit_intact": plant.audit.verify(),
+            "audit_intact": plant.audit_verifier.known_intact()
+            or plant.audit_verifier.verify_incremental().ok,
         }
     )
 
@@ -89,6 +100,7 @@ def handle_stats(server, request: Request) -> Response:
 def handle_reset(server, request: Request) -> Response:
     plant = _plant(server)
     plant.store.reset()
+    plant.audit_verifier.clear()
     return json_response({"status": "cleared"})
 
 
@@ -688,7 +700,41 @@ def handle_audit_last(server, request: Request) -> Response:
 
 
 def handle_audit_verify(server, request: Request) -> Response:
-    return json_response({"intact": _plant(server).audit.verify()})
+    result = _plant(server).audit_verifier.verify_incremental(_verification_policy(request))
+    payload = result.as_dict()
+    payload["intact"] = result.ok
+    return json_response(payload)
+
+
+def handle_audit_verify_full(server, request: Request) -> Response:
+    result = _plant(server).audit_verifier.verify_full(policy=_verification_policy(request))
+    payload = result.as_dict()
+    payload["intact"] = result.ok
+    return json_response(payload)
+
+
+def handle_audit_replay(server, request: Request) -> Response:
+    return json_response(_plant(server).audit_verifier.replay_checkpoint().as_dict())
+
+
+def handle_audit_replay_compare(server, request: Request) -> Response:
+    return json_response(_plant(server).audit_verifier.replay_and_compare())
+
+
+def handle_audit_checkpoints(server, request: Request) -> Response:
+    state = _plant(server).audit_verifier.checkpoint_state()
+    checkpoints = state.checkpoints if state else ()
+    return json_response(
+        {
+            "count": len(checkpoints),
+            "policy": _plant(server).audit_verifier.policy_summary(),
+            "checkpoints": [checkpoint.as_dict() for checkpoint in checkpoints],
+        }
+    )
+
+
+def handle_audit_integrity(server, request: Request) -> Response:
+    return json_response(_plant(server).audit_verifier.integrity())
 
 
 def handle_audit_timeline(server, request: Request) -> Response:
@@ -741,6 +787,10 @@ def handle_tombstones(server, request: Request) -> Response:
 def handle_persist(server, request: Request) -> Response:
     digest = _plant(server).store.persist()
     return json_response({"digest": digest})
+
+
+def handle_snapshot_summary(server, request: Request) -> Response:
+    return json_response(_plant(server).store.snapshot_summary())
 
 
 def handle_replay(server, request: Request) -> Response:

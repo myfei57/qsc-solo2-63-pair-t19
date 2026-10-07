@@ -8,11 +8,10 @@ claims to have happened before a step it depends on.
 
 from __future__ import annotations
 
-import hashlib
-import json
 from typing import Any
 
 from bagsort.clock import Clock
+from bagsort.model.audit_digest import digest_of
 from bagsort.model.entities import AuditEntry
 from bagsort.ns.topology import Topology
 from bagsort.store.store import Store
@@ -30,6 +29,14 @@ class AuditChain:
 
     def entries(self) -> list[AuditEntry]:
         return list(self._store.state().audit)
+
+    def entries_since(self, sequence: int) -> list[AuditEntry]:
+        audit = self._store.state().audit
+        if not audit or sequence >= audit[-1].sequence:
+            return []
+        if sequence < audit[0].sequence:
+            return list(audit)
+        return [entry for entry in audit if entry.sequence > sequence]
 
     def count(self) -> int:
         return len(self._store.state().audit)
@@ -131,21 +138,3 @@ class AuditChain:
                 return False
             previous = entry.digest
         return True
-
-
-def digest_of(entry: AuditEntry) -> str:
-    """Deterministic digest over the fields that must not change."""
-
-    material = json.dumps(
-        [
-            entry.sequence,
-            entry.kind,
-            entry.subject,
-            entry.detail,
-            entry.prev_digest,
-        ],
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(material.encode("utf-8")).hexdigest()

@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from .audit_accumulator import AuditAccumulator
+from .audit_digest import digest_of as audit_digest_of
 from .entities import (
     AuditEntry,
     Bag,
@@ -35,6 +37,8 @@ class State:
     transfer_commands: list[TransferCommand] = field(default_factory=list)
     load_records: list[LoadRecord] = field(default_factory=list)
     audit: list[AuditEntry] = field(default_factory=list)
+    audit_peaks: tuple[tuple[int, str], ...] = field(default_factory=tuple)
+    audit_root: str = AuditAccumulator(count=0, peaks=()).root
     quota_limits: dict[str, int] = field(default_factory=dict)
     counters: dict[str, int] = field(default_factory=dict)
     sequence: Sequence = field(default_factory=Sequence)
@@ -53,6 +57,8 @@ class State:
             transfer_commands=list(self.transfer_commands),
             load_records=list(self.load_records),
             audit=list(self.audit),
+            audit_peaks=self.audit_peaks,
+            audit_root=self.audit_root,
             quota_limits=dict(self.quota_limits),
             counters=dict(self.counters),
             sequence=self.sequence,
@@ -74,6 +80,8 @@ class State:
             "transfer_commands": [command.as_dict() for command in self.transfer_commands],
             "load_records": [record.as_dict() for record in self.load_records],
             "audit": [entry.as_dict() for entry in self.audit],
+            "audit_peaks": [list(peak) for peak in self.audit_peaks],
+            "audit_root": self.audit_root,
             "quota_limits": dict(sorted(self.quota_limits.items())),
             "counters": dict(sorted(self.counters.items())),
             "sequence": self.sequence.as_dict(),
@@ -123,7 +131,13 @@ def apply_entry(state: State, kind: str, payload: dict[str, Any]) -> None:
     elif kind == "load.append":
         state.load_records.append(LoadRecord.from_dict(payload["record"]))
     elif kind == "audit.append":
-        state.audit.append(AuditEntry.from_dict(payload["entry"]))
+        entry = AuditEntry.from_dict(payload["entry"])
+        state.audit.append(entry)
+        accumulator = AuditAccumulator.from_list(state.audit_peaks).append(
+            audit_digest_of(entry)
+        )
+        state.audit_peaks = accumulator.peaks
+        state.audit_root = accumulator.root
     elif kind == "quota.set":
         state.quota_limits[str(payload["flight_id"])] = int(payload["limit"])
     elif kind == "quota.adjust":

@@ -11,7 +11,7 @@ from bagsort.errors import ConflictError, ValidationError
 from bagsort.model.state import State
 from .journal import Journal, JournalEntry
 from .replay import replay
-from .snapshot import Envelope, build
+from .snapshot import Envelope, build, chain_digest, chain_digest_after
 
 
 class Session:
@@ -42,6 +42,9 @@ class Store:
         self._journal = Journal()
         self._cache: State | None = None
         self._dirty = False
+        self._persisted_digest = ""
+        self._persisted_chain_digest = ""
+        self._persisted_watermark = 0
 
     @property
     def path(self) -> str:
@@ -50,6 +53,22 @@ class Store:
     @property
     def watermark(self) -> int:
         return self._journal.watermark
+
+    @property
+    def journal_digest(self) -> str:
+        return self._journal.digest
+
+    @property
+    def persisted_digest(self) -> str:
+        return self._persisted_digest
+
+    @property
+    def persisted_chain_digest(self) -> str:
+        return self._persisted_chain_digest
+
+    @property
+    def persisted_watermark(self) -> int:
+        return self._persisted_watermark
 
     # -- read side ---------------------------------------------------------
 
@@ -63,6 +82,9 @@ class Store:
 
     def entries_since(self, watermark: int) -> list[JournalEntry]:
         return self._journal.since(watermark)
+
+    def chain_digest_after(self, watermark: int, previous: str) -> str:
+        return chain_digest_after(self._journal.since(watermark), watermark, previous)
 
     def pending(self) -> list[tuple[str, dict[str, Any], str]]:
         return self._journal.pending()
@@ -88,6 +110,32 @@ class Store:
             "transfer_commands": len(state.transfer_commands),
             "load_records": len(state.load_records),
             "audit": len(state.audit),
+        }
+
+    def snapshot_summary(self) -> dict[str, Any]:
+        """O(1) summary tying the live journal tail to the persisted snapshot."""
+
+        persisted = bool(self._persisted_digest)
+        has_persisted_tail = self.watermark == self._persisted_watermark
+        journal_anchor_ok = True
+        if persisted and not has_persisted_tail:
+            journal_anchor_ok = (
+                self.chain_digest_after(
+                    self._persisted_watermark, self._persisted_chain_digest
+                )
+                == self._journal.digest
+            )
+        return {
+            "watermark": self.watermark,
+            "journal_digest": self._journal.digest,
+            "persisted": persisted,
+            "dirty": self._dirty,
+            "persisted_watermark": self._persisted_watermark,
+            "persisted_digest": self._persisted_digest,
+            "persisted_chain_digest": self._persisted_chain_digest,
+            "snapshot_digest_matches": persisted and not self._dirty,
+            "watermark_matches": persisted and self.watermark == self._persisted_watermark,
+            "journal_anchor_matches": journal_anchor_ok,
         }
 
     # -- write side --------------------------------------------------------
@@ -131,6 +179,9 @@ class Store:
         self._journal = Journal()
         self._cache = State()
         self._dirty = True
+        self._persisted_digest = ""
+        self._persisted_chain_digest = ""
+        self._persisted_watermark = 0
 
     # -- persistence -------------------------------------------------------
 
@@ -150,6 +201,11 @@ class Store:
             handle.write(raw)
         os.replace(temporary, self._path)
         self._dirty = False
+        self._persisted_digest = envelope.digest
+        self._persisted_chain_digest = envelope.chain_digest or chain_digest(
+            list(envelope.entries)
+        )
+        self._persisted_watermark = envelope.watermark
         return envelope.digest
 
     def restore(self, envelope: Envelope) -> None:
@@ -167,6 +223,11 @@ class Store:
         self._journal.commit()
         self._cache = None
         self._dirty = False
+        self._persisted_digest = envelope.digest
+        self._persisted_chain_digest = envelope.chain_digest or chain_digest(
+            list(envelope.entries)
+        )
+        self._persisted_watermark = envelope.watermark
 
     @classmethod
     def open(cls, path: str) -> "Store":

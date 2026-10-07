@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from bagsort.audit.chain import AuditChain
+from bagsort.audit.checkpoint import CheckpointStore, VerificationPolicy
+from bagsort.audit.verifier import AuditVerifier
 from bagsort.belt.belt import Belt
 from bagsort.checkin.desk import Desk
 from bagsort.clock import Clock
@@ -68,6 +70,7 @@ class Plant:
     belt: Belt
     quota: QuotaBook
     audit: AuditChain
+    audit_verifier: AuditVerifier
     report: PlantReport
 
     @property
@@ -82,6 +85,7 @@ class Plant:
         store: Store,
         terminal: str = DEFAULT_TERMINAL,
         clock: Clock | None = None,
+        verification_policy: VerificationPolicy | None = None,
     ) -> "Plant":
         clock = clock or Clock()
         namespace = Namespace(terminal)
@@ -107,6 +111,10 @@ class Plant:
         belt = Belt(store, clock, IdFactory("cmd"))
 
         audit = AuditChain(store, clock, handling_line())
+        checkpoint_store = CheckpointStore(f"{store.path}.audit-checkpoints")
+        audit_verifier = AuditVerifier(
+            audit, store, checkpoint_store, clock, verification_policy
+        )
         audit_subscriber = _AuditSubscriber(audit)
         for topic in (
             "bag.checked_in",
@@ -146,6 +154,7 @@ class Plant:
             belt=belt,
             quota=quota,
             audit=audit,
+            audit_verifier=audit_verifier,
             report=report,
         )
 
@@ -244,7 +253,10 @@ class Plant:
         return self.quota.set_limit(flight_id, limit)
 
     def verify(self) -> bool:
-        return self.audit.verify()
+        return self.audit_verifier.verify_incremental().ok
+
+    def verify_full(self) -> bool:
+        return self.audit_verifier.verify_full().ok
 
 
 class _AuditSubscriber:
