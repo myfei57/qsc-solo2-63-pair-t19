@@ -51,6 +51,8 @@ def build_parser() -> argparse.ArgumentParser:
     commands.add_parser("report", help="print the plant report")
     commands.add_parser("status", help="print the store status")
     commands.add_parser("export", help="print audit and sort records as CSV")
+    verify = commands.add_parser("verify", help="verify the audit chain incrementally")
+    verify.add_argument("--deep", action="store_true", help="re-verify from the genesis")
 
     seed = commands.add_parser("seed", help="seed default lanes and flights")
     seed.add_argument("--persist", action="store_true", help="write a snapshot afterwards")
@@ -118,6 +120,12 @@ def _command_export(plant: Plant) -> int:
     return 0
 
 
+def _command_verify(plant: Plant, args: argparse.Namespace) -> int:
+    report = plant.verify_incremental(deep=args.deep)
+    print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0 if report["intact"] else 1
+
+
 def _command_seed(store: Store, plant: Plant, args: argparse.Namespace) -> int:
     seeded = seed_defaults(plant)
     print(json.dumps(seeded, ensure_ascii=False, sort_keys=True))
@@ -159,6 +167,8 @@ def main(argv: list[str] | None = None) -> int:
         return _command_status(store, plant)
     if args.command == "export":
         return _command_export(plant)
+    if args.command == "verify":
+        return _command_verify(plant, args)
     if args.command == "seed":
         return _command_seed(store, plant, args)
     if args.command == "reset":

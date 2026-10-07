@@ -38,6 +38,22 @@ class AuditChain:
         audit = self._store.state().audit
         return audit[-1] if audit else None
 
+    def entry_at(self, sequence: int) -> AuditEntry | None:
+        """The entry with ``sequence`` (1-based), or ``None`` when absent."""
+
+        audit = self._store.state().audit
+        if sequence < 1 or sequence > len(audit):
+            return None
+        return audit[sequence - 1]
+
+    def entry_at(self, sequence: int) -> AuditEntry | None:
+        """The entry with ``sequence`` (1-based), or ``None`` when absent."""
+
+        audit = self._store.state().audit
+        if sequence < 1 or sequence > len(audit):
+            return None
+        return audit[sequence - 1]
+
     def last_digest(self) -> str:
         entry = self.last()
         return entry.digest if entry else GENESIS

@@ -24,12 +24,15 @@ def _plant(server):
 
 def handle_health(server, request: Request) -> Response:
     plant = _plant(server)
+    progress = plant.verifier.progress()
     return json_response(
         {
             "status": "ok",
             "watermark": plant.store.watermark,
             "dirty": plant.store.dirty(),
             "audit_intact": plant.audit.verify(),
+            "audit_verified_through": progress["verified_through"],
+            "audit_pending": progress["pending_entries"],
         }
     )
 
@@ -689,6 +692,31 @@ def handle_audit_last(server, request: Request) -> Response:
 
 def handle_audit_verify(server, request: Request) -> Response:
     return json_response({"intact": _plant(server).audit.verify()})
+
+
+def handle_audit_verify_incremental(server, request: Request) -> Response:
+    deep = request.bool_field("deep", False) or request.query_str("deep").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    report = _plant(server).verify_incremental(deep=deep)
+    return json_response(report)
+
+
+def handle_audit_verify_status(server, request: Request) -> Response:
+    plant = _plant(server)
+    payload = plant.verifier.status()
+    payload["snapshot"] = {
+        "digest": plant.store.envelope().digest,
+        "watermark": plant.store.watermark,
+        "entries": len(plant.store.entries()),
+    }
+    return json_response(payload)
+
+
+def handle_audit_checkpoints(server, request: Request) -> Response:
+    return json_response(_plant(server).verifier.checkpoints())
 
 
 def handle_audit_timeline(server, request: Request) -> Response:

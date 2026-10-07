@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from bagsort.audit.chain import AuditChain
+from bagsort.audit.checkpoints import CountPolicy
+from bagsort.audit.verify import IncrementalVerifier, VerificationReport
 from bagsort.belt.belt import Belt
 from bagsort.checkin.desk import Desk
 from bagsort.clock import Clock
@@ -68,6 +70,7 @@ class Plant:
     belt: Belt
     quota: QuotaBook
     audit: AuditChain
+    verifier: IncrementalVerifier
     report: PlantReport
 
     @property
@@ -82,6 +85,7 @@ class Plant:
         store: Store,
         terminal: str = DEFAULT_TERMINAL,
         clock: Clock | None = None,
+        verify_every: int = 64,
     ) -> "Plant":
         clock = clock or Clock()
         namespace = Namespace(terminal)
@@ -107,6 +111,7 @@ class Plant:
         belt = Belt(store, clock, IdFactory("cmd"))
 
         audit = AuditChain(store, clock, handling_line())
+        verifier = IncrementalVerifier(audit, store, clock, policy=CountPolicy(verify_every))
         audit_subscriber = _AuditSubscriber(audit)
         for topic in (
             "bag.checked_in",
@@ -146,6 +151,7 @@ class Plant:
             belt=belt,
             quota=quota,
             audit=audit,
+            verifier=verifier,
             report=report,
         )
 
@@ -245,6 +251,12 @@ class Plant:
 
     def verify(self) -> bool:
         return self.audit.verify()
+
+    def verify_incremental(self, deep: bool = False) -> dict[str, object]:
+        """Verify the audit chain from the persisted checkpoint forward."""
+
+        report: VerificationReport = self.verifier.verify(deep=deep)
+        return report.as_dict()
 
 
 class _AuditSubscriber:

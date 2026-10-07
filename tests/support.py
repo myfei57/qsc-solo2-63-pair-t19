@@ -10,15 +10,15 @@ from bagsort.console.server import Server
 from bagsort.store.store import Store
 
 
-def make_plant(tmp_path: Path, terminal: str = "T1", name: str = "state.json") -> Plant:
+def make_plant(tmp_path: Path, terminal: str = "T1", name: str = "state.json", verify_every: int = 64) -> Plant:
     """A wired plant backed by a fresh file in ``tmp_path``."""
 
     store = Store(str(tmp_path / name))
-    return Plant.build(store, terminal=terminal, clock=Clock())
+    return Plant.build(store, terminal=terminal, clock=Clock(), verify_every=verify_every)
 
 
-def make_server(tmp_path: Path, terminal: str = "T1") -> Server:
-    return Server(make_plant(tmp_path, terminal=terminal))
+def make_server(tmp_path: Path, terminal: str = "T1", verify_every: int = 64) -> Server:
+    return Server(make_plant(tmp_path, terminal=terminal, verify_every=verify_every))
 
 
 def register_flight(plant: Plant, code: str = "CA1234", carousel: str = "CR1", chute: str = ""):
